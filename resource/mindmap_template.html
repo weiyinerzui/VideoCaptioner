@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>思维导图</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Microsoft YaHei', 'SimHei', Arial, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        #mindmap {
+            width: 100%;
+            height: 100vh;
+        }
+
+        .node {
+            cursor: pointer;
+        }
+
+        .node circle {
+            stroke-width: 2px;
+            transition: all 0.3s ease;
+        }
+
+        .node:hover circle {
+            stroke-width: 4px;
+            filter: brightness(1.2);
+        }
+
+        .node text {
+            font-size: 13px;
+            font-weight: 500;
+            fill: #ffffff;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+        }
+
+        .link {
+            fill: none;
+            stroke: rgba(255, 255, 255, 0.3);
+            stroke-width: 1.5px;
+        }
+
+        /* 根节点样式 */
+        .node.root circle {
+            fill: #e94560;
+            stroke: #ff6b6b;
+            r: 15;
+        }
+
+        .node.root text {
+            font-size: 16px;
+            font-weight: bold;
+        }
+
+        /* 一级节点样式 */
+        .node.level-1 circle {
+            fill: #0f3460;
+            stroke: #16213e;
+            r: 10;
+        }
+
+        .node.level-1 text {
+            font-size: 14px;
+        }
+
+        /* 二级节点样式 */
+        .node.level-2 circle {
+            fill: #533483;
+            stroke: #7952b3;
+            r: 7;
+        }
+
+        /* 三级节点样式 */
+        .node.level-3 circle {
+            fill: #4a6fa5;
+            stroke: #6b93d6;
+            r: 5;
+        }
+
+        /* 控制面板 */
+        .controls {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            z-index: 1000;
+        }
+
+        .controls button {
+            display: block;
+            width: 100%;
+            margin: 5px 0;
+            padding: 10px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .controls button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        /* 提示信息 */
+        .tooltip {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 12px;
+            color: #333;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="controls">
+        <button onclick="resetZoom()">重置视图</button>
+        <button onclick="expandAll()">展开全部</button>
+        <button onclick="collapseAll()">折叠全部</button>
+    </div>
+    <div class="tooltip">🖱️ 滚轮缩放 | 拖拽移动 | 点击节点展开/折叠</div>
+    <div id="mindmap"></div>
+
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script>
+        // 思维导图数据将由Python注入
+        let mindmapData = {{ MINDMAP_DATA }};
+
+        const margin = { top: 40, right: 200, bottom: 40, left: 100 };
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        // 计算节点数量来动态调整布局
+        function countNodes(node) {
+            let count = 1;
+            if (node.children) {
+                node.children.forEach(child => {
+                    count += countNodes(child);
+                });
+            }
+            return count;
+        }
+        const nodeCount = countNodes(mindmapData);
+        const dynamicHeight = Math.max(height, nodeCount * 25);
+
+        // 创建SVG
+        const svgElement = d3.select("#mindmap")
+            .append("svg")
+            .attr("width", width)
+            .attr("height", height);
+
+        // 创建缩放容器
+        const g = svgElement.append("g")
+            .attr("transform", `translate(${margin.left}, ${margin.top})`);
+
+        // 设置缩放行为
+        const zoom = d3.zoom()
+            .scaleExtent([0.3, 3])
+            .on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            });
+
+        svgElement.call(zoom);
+
+        // 创建水平树布局
+        const treeLayout = d3.tree()
+            .size([dynamicHeight - margin.top - margin.bottom, width - margin.left - margin.right - 200]);
+
+        // 转换数据为层次结构
+        let root = d3.hierarchy(mindmapData);
+
+        // 初始只展开前两层
+        root.descendants().forEach((d, i) => {
+            if (d.depth > 1) {
+                d._children = d.children;
+                d.children = null;
+            }
+        });
+
+        // 用于生成唯一ID
+        let i = 0;
+
+        // 渲染函数
+        function update(source) {
+            // 计算新布局
+            treeLayout(root);
+
+            // 获取所有节点和连线
+            const nodes = root.descendants();
+            const links = root.links();
+
+            // 调整节点位置 (交换x和y实现水平布局)
+            nodes.forEach(d => {
+                d.y = d.depth * 220;  // 水平间距
+            });
+
+            // ===== 更新节点 =====
+            const node = g.selectAll("g.node")
+                .data(nodes, d => d.id || (d.id = ++i));
+
+            // 新节点进入
+            const nodeEnter = node.enter()
+                .append("g")
+                .attr("class", d => `node ${d.depth === 0 ? 'root' : 'level-' + Math.min(d.depth, 3)}`)
+                .attr("transform", d => `translate(${source.y0 || 0},${source.x0 || 0})`)
+                .on("click", (event, d) => {
+                    // 点击切换展开/折叠
+                    if (d.children) {
+                        d._children = d.children;
+                        d.children = null;
+                    } else if (d._children) {
+                        d.children = d._children;
+                        d._children = null;
+                    }
+                    update(d);
+                });
+
+            // 添加圆圈
+            nodeEnter.append("circle")
+                .attr("r", d => {
+                    if (d.depth === 0) return 15;
+                    if (d.depth === 1) return 10;
+                    if (d.depth === 2) return 7;
+                    return 5;
+                })
+                .style("fill", d => d._children ? "#e94560" : null);
+
+            // 添加文本
+            nodeEnter.append("text")
+                .attr("dy", "0.35em")
+                .attr("x", d => d.children || d._children ? -15 : 15)
+                .attr("text-anchor", d => d.children || d._children ? "end" : "start")
+                .text(d => d.data.text)
+                .clone(true).lower()
+                .attr("stroke", "rgba(0,0,0,0.5)")
+                .attr("stroke-width", 3);
+
+            // 合并新旧节点
+            const nodeUpdate = nodeEnter.merge(node);
+
+            // 过渡动画
+            nodeUpdate.transition()
+                .duration(500)
+                .attr("transform", d => `translate(${d.y},${d.x})`);
+
+            // 更新圆圈样式
+            nodeUpdate.select("circle")
+                .style("fill", d => d._children ? "#e94560" : null);
+
+            // 移除退出的节点
+            node.exit()
+                .transition()
+                .duration(500)
+                .attr("transform", d => `translate(${source.y},${source.x})`)
+                .remove();
+
+            // ===== 更新连线 =====
+            const link = g.selectAll("path.link")
+                .data(links, d => d.target.id);
+
+            // 新连线进入
+            const linkEnter = link.enter()
+                .insert("path", "g")
+                .attr("class", "link")
+                .attr("d", d => {
+                    const o = { x: source.x0 || 0, y: source.y0 || 0 };
+                    return diagonal(o, o);
+                });
+
+            // 合并新旧连线
+            const linkUpdate = linkEnter.merge(link);
+
+            // 过渡动画
+            linkUpdate.transition()
+                .duration(500)
+                .attr("d", d => diagonal(d.source, d.target));
+
+            // 移除退出的连线
+            link.exit()
+                .transition()
+                .duration(500)
+                .attr("d", d => {
+                    const o = { x: source.x, y: source.y };
+                    return diagonal(o, o);
+                })
+                .remove();
+
+            // 保存当前位置用于下次过渡
+            nodes.forEach(d => {
+                d.x0 = d.x;
+                d.y0 = d.y;
+            });
+        }
+
+        // 生成曲线路径
+        function diagonal(s, d) {
+            return `M ${s.y} ${s.x}
+                    C ${(s.y + d.y) / 2} ${s.x},
+                      ${(s.y + d.y) / 2} ${d.x},
+                      ${d.y} ${d.x}`;
+        }
+
+        // 初始渲染
+        root.x0 = dynamicHeight / 2;
+        root.y0 = 0;
+        update(root);
+
+        // 初始缩放以适应视图
+        const initialTransform = d3.zoomIdentity
+            .translate(margin.left, height / 2 - dynamicHeight / 2)
+            .scale(0.9);
+        svgElement.call(zoom.transform, initialTransform);
+
+        // 控制函数
+        function resetZoom() {
+            svgElement.transition()
+                .duration(750)
+                .call(zoom.transform, initialTransform);
+        }
+
+        function expandAll() {
+            root.descendants().forEach(d => {
+                if (d._children) {
+                    d.children = d._children;
+                    d._children = null;
+                }
+            });
+            update(root);
+        }
+
+        function collapseAll() {
+            root.descendants().forEach(d => {
+                if (d.children && d.depth > 0) {
+                    d._children = d.children;
+                    d.children = null;
+                }
+            });
+            update(root);
+        }
+
+        // 响应窗口大小变化
+        window.addEventListener('resize', () => {
+            location.reload();
+        });
+    </script>
+</body>
+
+</html>

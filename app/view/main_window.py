@@ -36,6 +36,28 @@ class MainWindow(FluentWindow):
         self.settingInterface = SettingInterface(self)
         self.subtitleStyleInterface = SubtitleStyleInterface(self)
         self.batchProcessInterface = BatchProcessInterface(self)
+        
+        # 尝试导入并创建视频播放器界面 (需要VLC)
+        self.videoPlayerInterface = None
+        try:
+            from app.view.video_player_interface import VideoPlayerInterface
+            self.videoPlayerInterface = VideoPlayerInterface(self)
+        except ImportError as e:
+            # VLC不可用时跳过视频预览功能
+            print(f"视频预览功能不可用: {e}")
+        
+        # 尝试导入并创建思维导图界面 (需要PyQtWebEngine)
+        self.mindMapInterface = None
+        try:
+            from app.view.mind_map_interface import MindMapInterface
+            self.mindMapInterface = MindMapInterface(self)
+        except ImportError as e:
+            # PyQtWebEngine不可用时跳过AI摘要功能
+            print(f"AI摘要功能不可用: {e}")
+
+
+
+
 
         # 初始化版本检查器
         self.versionChecker = VersionChecker()
@@ -61,7 +83,20 @@ class MainWindow(FluentWindow):
         # 添加导航项
         self.addSubInterface(self.homeInterface, FIF.HOME, self.tr("主页"))
         self.addSubInterface(self.batchProcessInterface, FIF.VIDEO, self.tr("批量处理"))
+        
+        # 只有VLC可用时才添加视频预览
+        if self.videoPlayerInterface:
+            self.addSubInterface(self.videoPlayerInterface, FIF.MOVIE, self.tr("视频预览"))
+        
+        # 只有PyQtWebEngine可用时才添加AI摘要
+        if self.mindMapInterface:
+            self.addSubInterface(self.mindMapInterface, FIF.ROBOT, self.tr("AI摘要"))
+        
         self.addSubInterface(self.subtitleStyleInterface, FIF.FONT, self.tr("字幕样式"))
+
+
+
+
 
         self.navigationInterface.addSeparator()
 

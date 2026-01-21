@@ -26,6 +26,8 @@ class SignalBus(QObject):
     video_source_changed = pyqtSignal(QUrl)  # 视频源改变信号
     video_segment_play = pyqtSignal(int, int)  # 播放片段信号，参数为开始和结束时间(ms)
     video_subtitle_added = pyqtSignal(str)  # 添加字幕文件信号
+    load_video_with_subtitles = pyqtSignal(str, str)  # 同时加载视频和字幕，参数为视频路径和字幕路径
+
 
     # 新增视频控制相关方法
     def play_video(self):

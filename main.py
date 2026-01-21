@@ -67,7 +67,11 @@ else:
     os.environ["QT_SCALE_FACTOR"] = str(cfg.get(cfg.dpiScale))
 QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)  # type: ignore
 
+# 设置 WebEngine 共享 OpenGL 上下文 (必须在 QApplication 创建前)
+QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)  # type: ignore
+
 app = QApplication(sys.argv)
+
 app.setAttribute(Qt.AA_DontCreateNativeWidgetSiblings, True)  # type: ignore
 
 # Internationalization

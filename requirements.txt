@@ -11,3 +11,5 @@ langdetect>=1.0.9
 pydub
 tenacity
 GPUtil>=1.4.0
+python-vlc>=3.0.0
+PyQtWebEngine>=5.15.0
