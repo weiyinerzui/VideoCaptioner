@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from typing import Dict, Optional
 
-from PyQt5.QtCore import QUrl, Qt, pyqtSignal
+from PyQt5.QtCore import QUrl, Qt, pyqtSignal, QThread
 from PyQt5.QtGui import QColor, QFont
 from PyQt5.QtWidgets import (
     QFileDialog,
@@ -33,6 +33,26 @@ from app.core.constant import (
     INFOBAR_DURATION_WARNING,
 )
 from app.core.entities import SupportedSubtitleFormats, SupportedVideoFormats
+from app.core.highlight_generator import HighlightGenerator
+from app.view.highlight_interface import HighlightInterface
+
+
+class HighlightWorker(QThread):
+    """精彩片段生成线程"""
+    finished = pyqtSignal(dict)
+    error = pyqtSignal(str)
+
+    def __init__(self, generator, text):
+        super().__init__()
+        self.generator = generator
+        self.text = text
+
+    def run(self):
+        try:
+            data = self.generator.generate(self.text)
+            self.finished.emit(data)
+        except Exception as e:
+            self.error.emit(str(e))
 
 
 class VideoPlayerInterface(QWidget):
@@ -103,6 +123,12 @@ class VideoPlayerInterface(QWidget):
 
         main_layout.addWidget(splitter)
 
+        # 精彩片段界面
+        self.highlight_interface = HighlightInterface(self)
+        self.highlight_interface.hide() # 默认隐藏，有数据时显示
+        self.highlight_interface.jumpToTime.connect(self._on_jump_to_time)
+        main_layout.addWidget(self.highlight_interface)
+
         # 底部状态标签
         self.status_label = BodyLabel(self.tr("请拖入视频文件和字幕文件"), self)
         self.status_label.setAlignment(Qt.AlignCenter)
@@ -121,6 +147,13 @@ class VideoPlayerInterface(QWidget):
         # 打开字幕
         self.command_bar.addAction(
             Action(FIF.DOCUMENT, self.tr("打开字幕"), triggered=self.open_subtitle_file)
+        )
+
+        self.command_bar.addSeparator()
+
+        # 生成精彩片段
+        self.command_bar.addAction(
+            Action(FIF.MOVIE, self.tr("生成精彩片段"), triggered=self._on_generate_highlights)
         )
 
         self.command_bar.addSeparator()
@@ -289,6 +322,10 @@ class VideoPlayerInterface(QWidget):
             self.current_subtitle_index = current_index
             self._highlight_current_subtitle(current_index)
 
+        # 更新精彩片段时间轴游标
+        if hasattr(self, 'highlight_interface') and self.highlight_interface.isVisible():
+            self.highlight_interface.set_current_time(position_ms)
+
     def _highlight_current_subtitle(self, index: int):
         """高亮当前字幕并滚动到可见区域"""
         if index < 0 or index >= self.subtitle_list.count():
@@ -353,3 +390,72 @@ class VideoPlayerInterface(QWidget):
                     duration=INFOBAR_DURATION_WARNING,
                     parent=self,
                 )
+
+    def _on_generate_highlights(self):
+        """生成精彩片段"""
+        if not self.subtitle_data:
+            InfoBar.warning(
+                self.tr("警告"),
+                self.tr("请先加载字幕文件"),
+                duration=INFOBAR_DURATION_WARNING,
+                parent=self,
+            )
+            return
+
+        # 准备字幕文本
+        subtitle_text = ""
+        for key, segment in self.subtitle_data.items():
+            start = self._format_time(segment["start_time"])
+            end = self._format_time(segment["end_time"])
+            text = segment.get("translated_subtitle") or segment.get("original_subtitle")
+            subtitle_text += f"[{start} -> {end}] {text}\n"
+
+        # 显示进度提示
+        self.status_label.setText("正在生成精彩片段，请稍候...")
+        self.command_bar.setEnabled(False)
+
+        # 启动线程
+        self.highlight_generator = HighlightGenerator()
+        self.highlight_worker = HighlightWorker(self.highlight_generator, subtitle_text)
+        self.highlight_worker.finished.connect(self._on_highlights_generated)
+        self.highlight_worker.error.connect(self._on_generation_error)
+        self.highlight_worker.start()
+
+    def _on_highlights_generated(self, data: Dict):
+        """精彩片段生成完成"""
+        self.command_bar.setEnabled(True)
+        self.status_label.setText("精彩片段生成完成")
+        
+        # 获取视频时长(ms)
+        duration = self.video_widget.vlc_player.duration()
+        if duration <= 0:
+            # 如果获取不到时长，尝试从字幕最后一条推断
+            last_segment = list(self.subtitle_data.values())[-1]
+            duration = last_segment["end_time"] + 5000 # 加5秒缓冲
+
+        self.highlight_interface.set_data(duration, data)
+        self.highlight_interface.show()
+
+        InfoBar.success(
+            self.tr("成功"),
+            self.tr("精彩片段生成成功"),
+            duration=INFOBAR_DURATION_SUCCESS,
+            parent=self,
+        )
+
+    def _on_generation_error(self, error: str):
+        """生成失败"""
+        self.command_bar.setEnabled(True)
+        self.status_label.setText("生成失败")
+        
+        InfoBar.error(
+            self.tr("错误"),
+            self.tr("生成失败: ") + error,
+            duration=INFOBAR_DURATION_ERROR,
+            parent=self,
+        )
+
+    def _on_jump_to_time(self, timestamp: int):
+        """跳转到指定时间"""
+        self.video_widget.vlc_player.setPosition(timestamp)
+        self.video_widget.play()
