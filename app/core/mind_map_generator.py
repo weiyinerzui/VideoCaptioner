@@ -58,6 +58,45 @@ class MindMapGenerator:
 
 请直接返回JSON，不要包含任何其他文字。"""
 
+    DEFAULT_SUMMARY_PROMPT = """请阅读以下视频字幕内容，生成一份详细的内容摘要。
+
+要求：
+1. 总结视频的主要内容和核心观点。
+2. 使用Markdown格式。
+3. 结构清晰，分点叙述。
+4. 语言通顺，逻辑严密。
+
+字幕内容：
+{subtitle_text}
+"""
+
+    DEFAULT_CONCEPT_MAP_PROMPT = """请分析以下视频字幕内容，生成一个标准的概念图（Concept Map）。
+
+要求：
+1. **核心问题 (Focus Question)**：确定视频的一个核心主题作为中心节点。
+2. **概念 (Concepts)**：提取关键概念作为节点（名词）。
+3. **关系 (Relationships)**：识别概念之间的关系，用连接词（动词或短语）描述。
+4. **层级结构**：从最宏观的概念（上层）到最具体的概念（下层）。
+5. **交叉连接 (Cross-links)**：寻找不同分支概念之间的横向联系。
+6. 以JSON格式返回，包含 `nodes` 和 `links` 列表：
+{
+  "nodes": [
+    {"id": "1", "text": "核心主题", "type": "root"},
+    {"id": "2", "text": "概念A", "type": "normal"},
+    {"id": "3", "text": "概念B", "type": "normal"}
+  ],
+  "links": [
+    {"source": "1", "target": "2", "label": "包含"},
+    {"source": "1", "target": "3", "label": "导致"},
+    {"source": "2", "target": "3", "label": "交叉连接示例"}
+  ]
+}
+
+字幕内容：
+{subtitle_text}
+
+请直接返回JSON，不要包含任何其他文字。确保所有source和target的id都在nodes列表中存在。"""
+
     def __init__(self, custom_prompt: Optional[str] = None):
         """
         初始化思维导图生成器
@@ -105,21 +144,31 @@ class MindMapGenerator:
 
         self.client = OpenAI(api_key=api_key, base_url=base_url)
 
-    def generate(self, subtitle_text: str) -> MindMapNode:
+    def generate(self, subtitle_text: str, generation_type: str = "mind_map"):
         """
-        生成思维导图
+        生成内容
 
         Args:
             subtitle_text: 字幕文本内容
+            generation_type: 生成类型 ("mind_map", "summary", "concept_map")
 
         Returns:
-            MindMapNode: 思维导图根节点
-
-        Raises:
-            Exception: 生成失败时抛出异常
+            MindMapNode | dict | str: 结果
+            - mind_map: MindMapNode
+            - summary: MindMapNode (text only)
+            - concept_map: dict {"nodes": [], "links": []}
         """
-        # 构建提示词 - 使用replace而不是format,避免字幕中的花括号被误解析
-        prompt = self.custom_prompt or self.DEFAULT_PROMPT
+        # 选择提示词
+        if self.custom_prompt:
+            prompt = self.custom_prompt
+        elif generation_type == "summary":
+            prompt = self.DEFAULT_SUMMARY_PROMPT
+        elif generation_type == "concept_map":
+            prompt = self.DEFAULT_CONCEPT_MAP_PROMPT
+        else:
+            prompt = self.DEFAULT_PROMPT
+
+        # 构建提示词
         prompt = prompt.replace("{subtitle_text}", subtitle_text)
 
         try:
@@ -136,6 +185,10 @@ class MindMapGenerator:
                 raise Exception("LLM返回内容为空")
             
             content = content.strip()
+
+            # 如果是摘要，直接返回文本节点
+            if generation_type == "summary":
+                return MindMapNode(content, [])
 
             # 尝试解析JSON - 清理markdown代码块标记
             if content.startswith("```json"):
@@ -170,6 +223,12 @@ class MindMapGenerator:
                 print(f"DEBUG: Data is not a dict: {data}")
                 raise Exception(f"LLM返回的数据格式不正确(需要JSON对象): {type(data)}")
 
+            # 如果是概念图，直接返回数据字典
+            if generation_type == "concept_map":
+                if "nodes" not in data or "links" not in data:
+                    raise Exception("概念图数据缺少 nodes 或 links 字段")
+                return data
+
             # 构建思维导图
             return self._build_tree(data)
 
@@ -185,7 +244,7 @@ class MindMapGenerator:
                 
             if "无法解析" in error_msg or "LLM" in error_msg:
                 raise Exception(f"{error_msg}\n\n详细错误:\n{tb}")
-            raise Exception(f"生成思维导图失败: {error_msg}\n\n详细错误:\n{tb}")
+            raise Exception(f"生成失败: {error_msg}\n\n详细错误:\n{tb}")
 
     def _build_tree(self, data: Dict) -> MindMapNode:
         """

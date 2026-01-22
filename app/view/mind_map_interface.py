@@ -45,19 +45,20 @@ from app.core.mind_map_generator import MindMapGenerator, MindMapNode
 class MindMapGeneratorThread(QThread):
     """思维导图生成线程"""
 
-    finished = pyqtSignal(MindMapNode)
+    finished = pyqtSignal(object, str) # node/dict, type
     error = pyqtSignal(str)
 
-    def __init__(self, subtitle_text: str, custom_prompt: Optional[str] = None):
+    def __init__(self, subtitle_text: str, custom_prompt: Optional[str] = None, generation_type: str = "mind_map"):
         super().__init__()
         self.subtitle_text = subtitle_text
         self.custom_prompt = custom_prompt
+        self.generation_type = generation_type
 
     def run(self):
         try:
             generator = MindMapGenerator(self.custom_prompt)
-            mind_map = generator.generate(self.subtitle_text)
-            self.finished.emit(mind_map)
+            result = generator.generate(self.subtitle_text, self.generation_type)
+            self.finished.emit(result, self.generation_type)
         except Exception as e:
             self.error.emit(str(e))
 
@@ -137,13 +138,15 @@ class MindMapInterface(QWidget):
                 background-color: #1e1e1e;
             }
         """)
-        main_layout.addWidget(self.web_view)
+        main_layout.addWidget(self.web_view, 1) # Web视图占用所有剩余空间
 
         # 加载提示页面
         self._show_welcome_page()
 
-        # 底部状态栏
-        bottom_layout = QHBoxLayout()
+        # 底部状态栏容器
+        bottom_container = QWidget()
+        bottom_layout = QHBoxLayout(bottom_container)
+        bottom_layout.setContentsMargins(0, 0, 0, 0)
 
         self.status_label = BodyLabel(self.tr("请加载字幕文件"), self)
         bottom_layout.addWidget(self.status_label)
@@ -153,8 +156,10 @@ class MindMapInterface(QWidget):
         self.progress_ring.setFixedSize(24, 24)
         self.progress_ring.hide()
         bottom_layout.addWidget(self.progress_ring)
+        
+        bottom_layout.addStretch(1) # 靠左对齐
 
-        main_layout.addLayout(bottom_layout)
+        main_layout.addWidget(bottom_container, 0) # 底部状态栏只占用最小空间
 
     def _setup_command_bar(self):
         """设置命令栏"""
@@ -178,12 +183,32 @@ class MindMapInterface(QWidget):
         self.command_bar.addSeparator()
 
         # 生成思维导图按钮
-        self.generate_button = PrimaryPushButton(
+        self.generate_mindmap_btn = PrimaryPushButton(
             self.tr("生成思维导图"), self, icon=FIF.ROBOT
         )
-        self.generate_button.clicked.connect(self.generate_mind_map)
-        self.generate_button.setEnabled(False)
-        self.command_bar.addWidget(self.generate_button)
+        self.generate_mindmap_btn.clicked.connect(lambda: self.start_generation("mind_map"))
+        self.generate_mindmap_btn.setEnabled(False)
+        self.command_bar.addWidget(self.generate_mindmap_btn)
+
+        self.command_bar.addSeparator()
+
+        # 生成内容摘要按钮
+        self.generate_summary_btn = PushButton(
+            self.tr("生成内容摘要"), self, icon=FIF.ALIGNMENT
+        )
+        self.generate_summary_btn.clicked.connect(lambda: self.start_generation("summary"))
+        self.generate_summary_btn.setEnabled(False)
+        self.command_bar.addWidget(self.generate_summary_btn)
+
+        self.command_bar.addSeparator()
+
+        # 生成概念图按钮
+        self.generate_concept_btn = PushButton(
+            self.tr("生成概念图"), self, icon=FIF.SHARE
+        )
+        self.generate_concept_btn.clicked.connect(lambda: self.start_generation("concept_map"))
+        self.generate_concept_btn.setEnabled(False)
+        self.command_bar.addWidget(self.generate_concept_btn)
 
         # 导出按钮
         self.export_button = PushButton(self.tr("导出"), self, icon=FIF.SAVE)
@@ -279,7 +304,10 @@ class MindMapInterface(QWidget):
             self.subtitle_path = subtitle_path
 
             # 启用生成按钮
-            self.generate_button.setEnabled(True)
+            # 启用生成按钮
+            self.generate_mindmap_btn.setEnabled(True)
+            self.generate_summary_btn.setEnabled(True)
+            self.generate_concept_btn.setEnabled(True)
 
             self.status_label.setText(
                 self.tr("已加载字幕: ") + Path(subtitle_path).name
@@ -320,8 +348,8 @@ class MindMapInterface(QWidget):
                     parent=self,
                 )
 
-    def generate_mind_map(self):
-        """生成思维导图"""
+    def start_generation(self, generation_type: str):
+        """开始生成任务"""
         if not self.subtitle_text:
             InfoBar.warning(
                 self.tr("警告"),
@@ -332,32 +360,57 @@ class MindMapInterface(QWidget):
             return
 
         # 显示加载状态
-        self.generate_button.setEnabled(False)
+        self._set_buttons_enabled(False)
         self.progress_ring.show()
-        self.status_label.setText(self.tr("正在生成思维导图..."))
+        
+        type_name = {
+            "mind_map": "思维导图",
+            "summary": "内容摘要",
+            "concept_map": "概念图"
+        }.get(generation_type, "内容")
+        
+        self.status_label.setText(self.tr(f"正在生成{type_name}..."))
 
         # 创建生成线程
         self.generator_thread = MindMapGeneratorThread(
-            self.subtitle_text, self.custom_prompt
+            self.subtitle_text, self.custom_prompt, generation_type
         )
         self.generator_thread.finished.connect(self._on_generation_finished)
         self.generator_thread.error.connect(self._on_generation_error)
         self.generator_thread.start()
 
-    def _on_generation_finished(self, mind_map_node: MindMapNode):
-        """生成完成"""
-        self.mind_map_node = mind_map_node
-        self.generate_button.setEnabled(True)
-        self.export_button.setEnabled(True)
-        self.progress_ring.hide()
-        self.status_label.setText(self.tr("思维导图生成成功"))
+    def _set_buttons_enabled(self, enabled: bool):
+        """设置按钮状态"""
+        self.generate_mindmap_btn.setEnabled(enabled)
+        self.generate_summary_btn.setEnabled(enabled)
+        self.generate_concept_btn.setEnabled(enabled)
+        self.export_button.setEnabled(enabled)
 
-        # 渲染思维导图
-        self._render_mind_map(mind_map_node)
+    def _on_generation_finished(self, result: any, generation_type: str):
+        """生成完成"""
+        self.mind_map_node = result # 这里可能是MindMapNode或dict
+        self._set_buttons_enabled(True)
+        self.progress_ring.hide()
+        
+        type_name = {
+            "mind_map": "思维导图",
+            "summary": "内容摘要",
+            "concept_map": "概念图"
+        }.get(generation_type, "内容")
+        
+        self.status_label.setText(self.tr(f"{type_name}生成成功"))
+
+        # 渲染结果
+        if generation_type == "summary":
+            self._render_summary(result.text)
+        elif generation_type == "concept_map":
+            self._render_concept_map(result)
+        else:
+            self._render_mind_map(result)
 
         InfoBar.success(
             self.tr("成功"),
-            self.tr("思维导图生成成功"),
+            self.tr(f"{type_name}生成成功"),
             duration=INFOBAR_DURATION_SUCCESS,
             parent=self,
         )
@@ -365,7 +418,7 @@ class MindMapInterface(QWidget):
     def _on_generation_error(self, error_msg: str):
         """生成失败"""
         print(f"DEBUG: _on_generation_error called with: {error_msg}")  # 直接打印到控制台
-        self.generate_button.setEnabled(True)
+        self._set_buttons_enabled(True)
         self.progress_ring.hide()
         self.status_label.setText(self.tr("生成失败"))
 
@@ -374,7 +427,7 @@ class MindMapInterface(QWidget):
         if len(error_msg) > 100 or "\n" in error_msg:
             w = MessageBox(
                 self.tr("错误"),
-                self.tr("生成思维导图失败"),
+                self.tr("生成失败"),
                 self
             )
             w.contentLabel.setText(error_msg)
@@ -390,6 +443,39 @@ class MindMapInterface(QWidget):
                 duration=INFOBAR_DURATION_ERROR,
                 parent=self,
             )
+
+    def _render_summary(self, text: str):
+        """渲染内容摘要"""
+        # 使用 markdown-it 或简单的 HTML 转换
+        import markdown
+        html_content = markdown.markdown(text)
+        
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {{
+                    font-family: 'Microsoft YaHei', sans-serif;
+                    line-height: 1.6;
+                    color: #e0e0e0;
+                    background-color: #1e1e1e;
+                    padding: 20px;
+                    max-width: 800px;
+                    margin: 0 auto;
+                }}
+                h1, h2, h3 {{ color: #fff; }}
+                code {{ background-color: #333; padding: 2px 4px; border-radius: 4px; }}
+                pre {{ background-color: #333; padding: 10px; border-radius: 8px; overflow-x: auto; }}
+            </style>
+        </head>
+        <body>
+            {html_content}
+        </body>
+        </html>
+        """
+        self.web_view.setHtml(html, QUrl("file:///"))
 
     def _render_mind_map(self, mind_map_node: MindMapNode):
         """渲染思维导图"""
@@ -426,12 +512,38 @@ class MindMapInterface(QWidget):
         # 加载到WebView (使用baseUrl以便加载外部JS)
         self.web_view.setHtml(html, QUrl("file:///"))
 
+    def _render_concept_map(self, concept_map_data: dict):
+        """渲染概念图"""
+        # 读取HTML模板
+        template_path = Path(__file__).parent.parent.parent / "resource" / "concept_map_template.html"
+
+        if not template_path.exists():
+            InfoBar.error(
+                self.tr("错误"),
+                self.tr("概念图模板文件不存在"),
+                duration=INFOBAR_DURATION_ERROR,
+                parent=self,
+            )
+            return
+
+        html_template = template_path.read_text(encoding="utf-8")
+
+        # 注入数据
+        json_data = json.dumps(concept_map_data, ensure_ascii=False)
+        
+        if "{{ CONCEPT_MAP_DATA }}" in html_template:
+            html = html_template.replace("{{ CONCEPT_MAP_DATA }}", json_data)
+        else:
+            html = html_template.replace("{{CONCEPT_MAP_DATA}}", json_data)
+
+        self.web_view.setHtml(html, QUrl("file:///"))
+
     def export_mind_map(self):
-        """导出思维导图"""
+        """导出当前视图"""
         if not self.mind_map_node:
             InfoBar.warning(
                 self.tr("警告"),
-                self.tr("请先生成思维导图"),
+                self.tr("请先生成内容"),
                 duration=INFOBAR_DURATION_WARNING,
                 parent=self,
             )
@@ -440,8 +552,8 @@ class MindMapInterface(QWidget):
         # 选择保存路径
         file_path, _ = QFileDialog.getSaveFileName(
             self,
-            self.tr("导出思维导图"),
-            "mindmap.html",
+            self.tr("导出"),
+            "export.html",
             self.tr("HTML文件 (*.html)"),
         )
 
@@ -449,24 +561,37 @@ class MindMapInterface(QWidget):
             return
 
         try:
-            # 读取当前HTML
-            template_path = Path(__file__).parent.parent.parent / "resource" / "mindmap_template.html"
-            html_template = template_path.read_text(encoding="utf-8")
+            # 判断当前是哪种类型
+            if isinstance(self.mind_map_node, dict): # 概念图
+                 template_path = Path(__file__).parent.parent.parent / "resource" / "concept_map_template.html"
+                 data_json = json.dumps(self.mind_map_node, ensure_ascii=False)
+                 placeholder = "{{ CONCEPT_MAP_DATA }}"
+            elif hasattr(self.mind_map_node, 'to_dict'): # 思维导图
+                 template_path = Path(__file__).parent.parent.parent / "resource" / "mindmap_template.html"
+                 data_json = json.dumps(self.mind_map_node.to_dict(), ensure_ascii=False)
+                 placeholder = "{{ MINDMAP_DATA }}"
+            else: # 摘要 (暂不支持导出HTML，或者导出为Markdown)
+                 # 简单处理：导出为包含Markdown的HTML
+                 import markdown
+                 html_content = markdown.markdown(self.mind_map_node.text)
+                 html = f"<html><body>{html_content}</body></html>"
+                 Path(file_path).write_text(html, encoding="utf-8")
+                 InfoBar.success(self.tr("成功"), self.tr("导出成功"), parent=self)
+                 return
 
-            mind_map_data = self.mind_map_node.to_dict()
-            mind_map_json = json.dumps(mind_map_data, ensure_ascii=False)
-            # 替换模板中的占位符 (支持带空格和不带空格)
-            if "{{ MINDMAP_DATA }}" in html_template:
-                html = html_template.replace("{{ MINDMAP_DATA }}", mind_map_json)
+            html_template = template_path.read_text(encoding="utf-8")
+            
+            if placeholder in html_template:
+                html = html_template.replace(placeholder, data_json)
             else:
-                html = html_template.replace("{{MINDMAP_DATA}}", mind_map_json)
+                html = html_template.replace(placeholder.replace(" ", ""), data_json)
 
             # 保存文件
             Path(file_path).write_text(html, encoding="utf-8")
 
             InfoBar.success(
                 self.tr("成功"),
-                self.tr("思维导图已导出至: ") + file_path,
+                self.tr("已导出至: ") + file_path,
                 duration=INFOBAR_DURATION_SUCCESS,
                 parent=self,
             )

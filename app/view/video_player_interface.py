@@ -83,14 +83,34 @@ class VideoPlayerInterface(QWidget):
         self._setup_command_bar()
         main_layout.addWidget(self.command_bar)
 
-        # 创建分割器 - 左侧视频,右侧字幕列表
-        splitter = QSplitter(Qt.Horizontal)
+        # 创建主分割器 - 左侧(视频+精彩片段), 右侧(字幕列表)
+        self.splitter = QSplitter(Qt.Horizontal)
 
-        # 左侧: 视频播放器
+        # --- 左侧容器 ---
+        # --- 左侧容器 (使用垂直分割器) ---
+        self.left_splitter = QSplitter(Qt.Vertical)
+        self.left_splitter.setHandleWidth(10) # 增加拖拽手柄宽度
+        self.left_splitter.setChildrenCollapsible(False) # 禁止子控件完全折叠
+        
+        # 1. 视频播放器
         self.video_widget = MyVideoWidget(self)
-        splitter.addWidget(self.video_widget)
+        self.video_widget.setMinimumHeight(400) # 设置最小高度
+        self.left_splitter.addWidget(self.video_widget)
 
-        # 右侧: 字幕列表
+        # 2. 精彩片段界面
+        self.highlight_interface = HighlightInterface(self)
+        self.highlight_interface.hide() # 默认隐藏
+        self.highlight_interface.jumpToTime.connect(self._on_jump_to_time)
+        self.left_splitter.addWidget(self.highlight_interface)
+
+        # 设置左侧垂直分割比例 (优先视频)
+        self.left_splitter.setStretchFactor(0, 1) # 视频
+        self.left_splitter.setStretchFactor(1, 0) # 精彩片段
+
+        self.splitter.addWidget(self.left_splitter)
+
+        # --- 右侧容器 ---
+        # 3. 字幕列表
         self.subtitle_list = QListWidget(self)
         self.subtitle_list.setWordWrap(True)
         self.subtitle_list.setStyleSheet("""
@@ -115,24 +135,18 @@ class VideoPlayerInterface(QWidget):
                 color: white;
             }
         """)
-        splitter.addWidget(self.subtitle_list)
+        self.splitter.addWidget(self.subtitle_list)
 
-        # 设置分割比例 (60% 视频, 40% 字幕)
-        splitter.setStretchFactor(0, 60)
-        splitter.setStretchFactor(1, 40)
+        # 设置分割比例 (70% 左侧, 30% 右侧)
+        self.splitter.setStretchFactor(0, 70)
+        self.splitter.setStretchFactor(1, 30)
 
-        main_layout.addWidget(splitter)
-
-        # 精彩片段界面
-        self.highlight_interface = HighlightInterface(self)
-        self.highlight_interface.hide() # 默认隐藏，有数据时显示
-        self.highlight_interface.jumpToTime.connect(self._on_jump_to_time)
-        main_layout.addWidget(self.highlight_interface)
+        main_layout.addWidget(self.splitter, 1) # 分割器占用所有剩余空间
 
         # 底部状态标签
         self.status_label = BodyLabel(self.tr("请拖入视频文件和字幕文件"), self)
         self.status_label.setAlignment(Qt.AlignCenter)
-        main_layout.addWidget(self.status_label)
+        main_layout.addWidget(self.status_label, 0) # 状态标签只占用最小空间
 
     def _setup_command_bar(self):
         """设置命令栏"""

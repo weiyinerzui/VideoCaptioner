@@ -363,7 +363,12 @@
 
         // 响应窗口大小变化
         window.addEventListener('resize', () => {
-            location.reload();
+            const newWidth = window.innerWidth;
+            const newHeight = window.innerHeight;
+            svgElement.attr("width", newWidth).attr("height", newHeight);
+            treeLayout.size([dynamicHeight - margin.top - margin.bottom, newWidth - margin.left - margin.right - 200]);
+            update(root);
+            svgElement.call(zoom.transform, d3.zoomIdentity.translate(margin.left, newHeight / 2 - dynamicHeight / 2).scale(0.9));
         });
     </script>
 </body>

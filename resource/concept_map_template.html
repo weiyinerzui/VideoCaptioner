@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>概念图</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Microsoft YaHei', sans-serif;
+            background-color: #f5f5f5;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        #concept-map {
+            width: 100%;
+            height: 100vh;
+        }
+
+        /* 节点样式 */
+        .node circle {
+            stroke: #fff;
+            stroke-width: 2px;
+            cursor: move;
+            transition: all 0.3s;
+        }
+
+        .node:hover circle {
+            stroke: #333;
+            stroke-width: 3px;
+        }
+
+        .node text {
+            font-size: 12px;
+            pointer-events: none;
+            text-shadow: 0 1px 0 #fff, 1px 0 0 #fff, 0 -1px 0 #fff, -1px 0 0 #fff;
+        }
+
+        .node.root circle {
+            fill: #ff7f50;
+            r: 30;
+        }
+
+        .node.root text {
+            font-size: 16px;
+            font-weight: bold;
+        }
+
+        .node.normal circle {
+            fill: #87cefa;
+            r: 20;
+        }
+
+        /* 连线样式 */
+        .link {
+            stroke: #999;
+            stroke-opacity: 0.6;
+            stroke-width: 1.5px;
+        }
+
+        /* 连线文字样式 */
+        .link-label {
+            font-size: 10px;
+            fill: #555;
+            text-anchor: middle;
+            background-color: rgba(255, 255, 255, 0.8);
+        }
+
+        /* 箭头样式 */
+        marker#arrowhead {
+            fill: #999;
+        }
+
+        /* 控制面板 */
+        .controls {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        button {
+            padding: 5px 10px;
+            margin: 5px;
+            cursor: pointer;
+            background: #fff;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+
+        button:hover {
+            background: #f0f0f0;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="controls">
+        <button onclick="resetZoom()">重置视图</button>
+    </div>
+    <div id="concept-map"></div>
+
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script>
+        // 数据注入点
+        const data = {{ CONCEPT_MAP_DATA }};
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        const svg = d3.select("#concept-map")
+            .append("svg")
+            .attr("width", width)
+            .attr("height", height)
+            .call(d3.zoom().on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            }));
+
+        // 定义箭头
+        svg.append("defs").append("marker")
+            .attr("id", "arrowhead")
+            .attr("viewBox", "0 -5 10 10")
+            .attr("refX", 25) // 调整箭头位置，避免被节点遮挡
+            .attr("refY", 0)
+            .attr("markerWidth", 6)
+            .attr("markerHeight", 6)
+            .attr("orient", "auto")
+            .append("path")
+            .attr("d", "M0,-5L10,0L0,5");
+
+        const g = svg.append("g");
+
+        // 力导向模拟
+        const simulation = d3.forceSimulation(data.nodes)
+            .force("link", d3.forceLink(data.links).id(d => d.id).distance(150))
+            .force("charge", d3.forceManyBody().strength(-500))
+            .force("center", d3.forceCenter(width / 2, height / 2))
+            .force("collide", d3.forceCollide().radius(40));
+
+        // 绘制连线
+        const link = g.append("g")
+            .selectAll(".link")
+            .data(data.links)
+            .enter().append("path")
+            .attr("class", "link")
+            .attr("marker-end", "url(#arrowhead)");
+
+        // 绘制连线文字 (背景框)
+        const linkLabelRect = g.append("g")
+            .selectAll(".link-label-rect")
+            .data(data.links)
+            .enter().append("rect")
+            .attr("fill", "rgba(255, 255, 255, 0.7)")
+            .attr("rx", 3)
+            .attr("ry", 3);
+
+        // 绘制连线文字
+        const linkLabel = g.append("g")
+            .selectAll(".link-label")
+            .data(data.links)
+            .enter().append("text")
+            .attr("class", "link-label")
+            .attr("dy", 3)
+            .text(d => d.label);
+
+        // 绘制节点
+        const node = g.append("g")
+            .selectAll(".node")
+            .data(data.nodes)
+            .enter().append("g")
+            .attr("class", d => `node ${d.type || 'normal'}`)
+            .call(d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended));
+
+        node.append("circle");
+
+        node.append("text")
+            .attr("dy", d => d.type === 'root' ? 5 : 4)
+            .attr("text-anchor", "middle")
+            .text(d => d.text);
+
+        // 更新位置
+        simulation.on("tick", () => {
+            link.attr("d", d => {
+                // 计算边缘路径，使箭头正确显示
+                const dx = d.target.x - d.source.x;
+                const dy = d.target.y - d.source.y;
+                const dr = 0; // 直线
+                return `M${d.source.x},${d.source.y}A${dr},${dr} 0 0,1 ${d.target.x},${d.target.y}`;
+            });
+
+            linkLabel
+                .attr("x", d => (d.source.x + d.target.x) / 2)
+                .attr("y", d => (d.source.y + d.target.y) / 2);
+
+            // 更新文字背景框
+            linkLabel.each(function (d) {
+                const bbox = this.getBBox();
+                const rect = d3.select(linkLabelRect.nodes()[d.index]);
+                rect.attr("x", bbox.x - 2)
+                    .attr("y", bbox.y - 2)
+                    .attr("width", bbox.width + 4)
+                    .attr("height", bbox.height + 4);
+            });
+
+            node.attr("transform", d => `translate(${d.x},${d.y})`);
+        });
+
+        function dragstarted(event, d) {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }
+
+        function dragged(event, d) {
+            d.fx = event.x;
+            d.fy = event.y;
+        }
+
+        function dragended(event, d) {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+        }
+
+        function resetZoom() {
+            svg.transition().duration(750).call(
+                d3.zoom().transform,
+                d3.zoomIdentity
+            );
+        }
+
+        // 窗口大小调整
+        window.addEventListener('resize', () => {
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            svg.attr("width", w).attr("height", h);
+            simulation.force("center", d3.forceCenter(w / 2, h / 2));
+            simulation.alpha(0.3).restart();
+        });
+    </script>
+</body>
+
+</html>
