@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.core.asr.asr_data import ASRData, ASRDataSeg
+from videocaptioner.core.asr.asr_data import ASRData, ASRDataSeg, handle_long_path
 
 
 class TestASRDataSegEdgeCases:
@@ -354,7 +354,7 @@ class TestFormatConversionEdgeCases:
 
     def test_srt_layout_modes_all(self):
         """测试所有SRT布局模式"""
-        from app.core.entities import SubtitleLayoutEnum
+        from videocaptioner.core.entities import SubtitleLayoutEnum
 
         segments = [ASRDataSeg("Hello", 0, 1000, translated_text="你好")]
         asr_data = ASRData(segments)
@@ -512,3 +512,40 @@ Text1
 """
         asr_data = ASRData.from_vtt(vtt)
         assert len(asr_data.segments) == 1
+
+
+class TestHandleLongPath:
+    """Windows 长路径前缀处理"""
+
+    def test_non_windows_returns_unchanged(self, monkeypatch):
+        monkeypatch.setattr("videocaptioner.core.asr.asr_data.platform.system", lambda: "Linux")
+        long_path = "C:\\" + "a" * 300
+        assert handle_long_path(long_path) == long_path
+
+    def test_windows_short_path_unchanged(self, monkeypatch):
+        monkeypatch.setattr("videocaptioner.core.asr.asr_data.platform.system", lambda: "Windows")
+        short_path = "C:\\Users\\me\\file.srt"
+        assert handle_long_path(short_path) == short_path
+
+    def test_windows_long_path_gets_prefix(self, monkeypatch):
+        monkeypatch.setattr("videocaptioner.core.asr.asr_data.platform.system", lambda: "Windows")
+        monkeypatch.setattr("videocaptioner.core.asr.asr_data.os.path.abspath", lambda p: p)
+        long_path = "C:\\Users\\me\\" + "a" * 300 + ".srt"
+        result = handle_long_path(long_path)
+        assert result.startswith("\\\\?\\")
+        assert result == "\\\\?\\" + long_path
+
+    def test_windows_already_prefixed_path_is_idempotent(self, monkeypatch):
+        """Regression: handle_long_path was double-prefixing already-prefixed paths.
+
+        The startswith check used r"\\\\?\\\\" (5 chars) but the prefix added is
+        "\\\\?\\" (4 chars), so a second call would re-prefix the path and produce
+        the malformed "\\\\?\\\\\\?\\C:\\..." seen in issue #1089.
+        """
+        monkeypatch.setattr("videocaptioner.core.asr.asr_data.platform.system", lambda: "Windows")
+        monkeypatch.setattr("videocaptioner.core.asr.asr_data.os.path.abspath", lambda p: p)
+        long_path = "C:\\Users\\me\\" + "a" * 300 + ".srt"
+        once = handle_long_path(long_path)
+        twice = handle_long_path(once)
+        assert twice == once
+        assert "\\\\?\\\\" not in twice
